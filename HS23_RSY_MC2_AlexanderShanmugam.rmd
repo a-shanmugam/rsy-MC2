@@ -1,0 +1,233 @@
+---
+title: "R Notebook"
+output: html_document
+---
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+```{r}
+library(recommenderlab)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(lsa)
+
+source("HS23_RSY_MC2_AlexanderShanmugam.R")
+```
+
+# 1. Erzeugung von Film- & Nutzerprofilen
+## 1.1 MovieLense Daten einlesen
+```{r}
+data(MovieLense)
+genres <- names(MovieLenseMeta)[4:22]
+```
+
+## 1.2 Binäre User-Liked-Items Matrix für alle Nutzer erzeugen
+```{r}
+# Set a threshold value
+threshold <- 3
+
+# Convert rating to like if rating is >= threshold, dislike otherwise
+matrix_userLikedItems <- apply(MovieLense@data, c(1,2), function(x) ifelse(x < threshold, 0, 1))
+matrix_userLikedItems <- as(matrix_userLikedItems, "binaryRatingMatrix")
+```
+## 1.3 Dimension der User-Liked-Items Matrix prüfen und ausgeben
+```{r}
+check_dimensions(matrix_userLikedItems, "User", "Filme", "User-Liked-Items")
+```
+## 1.4 Movie-Genre Matrix für alle Filme erzeugen
+```{r}
+matrix_movieGenre <- as.matrix(subset(MovieLenseMeta, select = -c(title, year, url)))
+rownames(matrix_movieGenre) <- MovieLenseMeta$title
+colnames(matrix_movieGenre) <- names(MovieLenseMeta)[4:22]
+```
+## 1.5 Dimension der Movie-Genre Matrix prüfen und ausgeben
+```{r}
+check_dimensions(matrix_movieGenre, "Filme", "Genres", "Movie-Genre")
+```
+
+## 1.6 Anzahl unterschiedlicher Filmprofile bestimmen und visualisieren
+```{r}
+df_genreCombinationCounts <- compute_profiles(matrix_movieGenre, TRUE)
+
+print(paste("The number of genre combinations found is:", length(df_genreCombinationCounts$Profile)))
+
+# Sort the data frame in decreasing order and select the top 30
+df_topMovieProfiles <- head(df_genreCombinationCounts[order(df_genreCombinationCounts$Count, decreasing = TRUE), ], 30)
+
+# Create a horizontal bar plot
+ggplot(df_topMovieProfiles, aes(x = reorder(Profile, Count), y = Count)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Top 30 Movie Profiles", x = "Profiles", y = "Count") +
+  theme_minimal()
+```
+
+## 1.7 Nutzerprofile im Genre-Vektorraum erzeugen
+```{r}
+matrix_userGenreProfile <- t(t(matrix_movieGenre) %*% matrix_userLikedItems@data@data)
+```
+
+## 1.8 Dimension der User-Genre_profil Matrix prüfen und ausgeben
+```{r}
+check_dimensions(matrix_userGenreProfile, "User", "Genres", "User-Genre_profil")
+```
+
+## 1.9 Anzahl unterschiedlicher Nutzerprofile bestimmen, wenn Stärke der Genre-Kombination
+vollständig berücksichtigt wird
+```{r}
+matrix_userGenreProfileBinary <- apply(matrix_userGenreProfile, c(1,2), function(x) ifelse(x < 1, 0, 1))
+matrix_userGenreProfileBinary <- matrix(apply(matrix_userGenreProfileBinary, c(1,2), as.integer), nrow = nrow(matrix_userGenreProfileBinary))
+matrix_userGenreProfile <- matrix(apply(matrix_userGenreProfile, c(1,2), as.integer), nrow = nrow(matrix_userGenreProfile))
+
+colnames(matrix_userGenreProfileBinary) <- genres
+colnames(matrix_userGenreProfile) <- genres
+rownames(matrix_userGenreProfileBinary) <- NULL
+rownames(matrix_userGenreProfile) <- NULL
+```
+
+```{r}
+df_genreCombinationCountsUser <- compute_profiles(matrix_userGenreProfile, FALSE)
+
+print(paste("Die Anzahl der unterschiedlichen Nutzerprofile, wenn die Stärke der Genre Kombination vollständig berücksichtigt wird, ist:", dim(df_genreCombinationCountsUser)[1]))
+```
+binär berücksichtigt wird
+```{r}
+df_genreCombinationCountsUserBinary <- compute_profiles(matrix_userGenreProfileBinary, TRUE)
+print(paste("Die Anzahl der unterschiedlichen Nutzerprofile, wenn die Stärke der Genre Kombination vollständig berücksichtigt wird, ist:", dim(df_genreCombinationCountsUserBinary)[1]))
+```
+
+
+## 2.1 Cosinus-Ähnlichkeit zwischen User-Genre und Movie-Genre Matrix berechnen
+```{r}
+# Define two 2x2 matrices
+mat1 <- matrix(c(1, 2, 3, 4, 5, 6), nrow = 3)
+mat2 <- matrix(c(5, 6, 7, 8, 9, 8, 7, 6, 5, 4), nrow = 5)
+
+# Calculate cosine similarity between each pair of corresponding vectors
+cosine_similarity <- matrix(NA, nrow = nrow(mat1), ncol = nrow(mat2))
+for (i in 1:nrow(mat1)) {
+  for (j in 1:nrow(mat2)) {
+    cosine_similarity[i, j] <- cosine(mat1[i, ], mat2[j, ])
+  }
+}
+
+similarities <- calc_cos_similarity_twomtrx(mat1, mat2)
+
+print(paste("Are all values of the similarity result matrices equal? Answer:", all.equal(cosine_similarity, similarities)))
+```
+
+```{r}
+matrix_similarities_movieGenre_userGenre <- calc_cos_similarity_twomtrx(matrix_movieGenre, matrix_userGenreProfile)
+
+cosine_similarity <- matrix(NA, nrow = nrow(matrix_movieGenre), ncol = nrow(matrix_userGenreProfile))
+cosine_similarity <- matrix(NA, nrow = nrow(matrix_movieGenre), ncol = nrow(matrix_userGenreProfile))
+for (i in 1:nrow(matrix_movieGenre)) {
+  for (j in 1:nrow(matrix_userGenreProfile)) {
+    cosine_similarity[i, j] <- cosine(matrix_movieGenre[i, ], matrix_userGenreProfile[j, ])
+  }
+}
+```
+
+## 2.2 Dimension der Matrix der Cosinus-Ähnlichleiten von Nutzern und Filmen prüfen und ausgeben
+```{r}
+check_dimensions(matrix_similarities_movieGenre_userGenre, "Filme", "User", "Cosinus-Ähnlichleiten von Nutzern und Filmen")
+```
+## 2.3 5-Zahlen Statistik für Matrix der Cosinus-Ähnlichkeiten prüfen und ausgeben
+```{r}
+print(paste("Is the 5 number summary of the lsa function the same as the one my function produced? Answer:", all.equal(fivenum(cosine_similarity), fivenum(matrix_similarities_movieGenre_userGenre))))
+
+fivenum(matrix_similarities_movieGenre_userGenre) #min, 1q, median, 3q, max
+```
+
+## 2.4 Cosinus-Ähnlichkeiten von Nutzern und Filmen mit Dichteplot visualisieren
+```{r}
+df <- data.frame(value = as.vector(matrix_similarities_movieGenre_userGenre))
+# Create the density plot
+ggplot(df, aes(x = value)) +
+  geom_density(fill = "blue", alpha = 0.5) +
+  labs(title = "Density Plot of Cosine Similarities", x = "Cosine Similarity")
+```
+
+# 2.5 Cosinus-Ähnlichkeiten von Nutzern und Filmen mit Dichteplot für Nutzer 241, 414, 477, 526, 640 und 710 visualisieren
+```{r}
+selectedUsers <- matrix_similarities_movieGenre_userGenre[, c(241, 414, 477, 526, 640, 710)]
+colnames(selectedUsers) <- c(241, 414, 477, 526, 640, 710)
+df_selectedUsers <- as.data.frame(selectedUsers)
+
+df_selectedUsers$ID <- rownames(df_selectedUsers)
+df_long <- tidyr::pivot_longer(df_selectedUsers, -ID, names_to = "User", values_to = "Value")
+
+# Create the violin plot
+ggplot(df_long, aes(x = User, y = Value, fill = User)) +
+  geom_violin(alpha = 0.5) +
+  labs(title = "Violin Plot of Selected Users", x = "User", y = "Cosine Similarity") +
+  theme(legend.position = "none")
+```
+
+## 3.1 Bewertete Filme maskieren, d.h. "Negativabzug" der User-Items Matrix erzeugen um anschliessend Empfehlungen herzuleiten
+```{r}
+# Invert the values of the matrix
+matrix_userLikeditems_inverted <- 1 - matrix_userLikedItems@data@data
+```
+## 3.2 Zeilensumme des Negativabzuges der User-Items Matrix für die User 5, 25, 50, 150 ausgeben
+```{r}
+colSums(matrix_userLikeditems_inverted[, c(5, 25, 50, 150)])
+```
+
+## 3.3 5-Zahlen Statistik der Zeilensumme des Negativabzuges der User-Items Matrix bestimmen
+```{r}
+fivenum(colSums(matrix_userLikeditems_inverted))
+```
+
+## 4.1 Matrix für Bewertung aller Filme durch element-wise Multiplikation der Matrix der Cosinus-Ähnlichkeiten von Nutzern und Filmen und Negativabzug der User-Items Matrix erzeugen
+```{r}
+matrix_movies <- matrix_similarities_movieGenre_userGenre * matrix_userLikeditems_inverted
+```
+
+## 4.2 Dimension der Matrix für die Bewertung aller Filme prüfen
+```{r}
+check_dimensions(matrix_movies, "Filme", "User", "Filmbewertung")
+```
+
+## 4.3 Top 20 Listen extrahieren und Länge der Listen pro Nutzer prüfen
+```{r}
+top20List <- get_topn_recos(matrix_movies, 20)
+
+# Check the length of all column vectors in the matrix
+rows_per_user <- table(top20List$User)
+
+print(paste("Do all lists contain 20 recommendations? ", sum(rows_per_user) / dim(MovieLenseUser)[1] == 20))
+```
+
+## 4.4 Verteilung der minimalen Ähnlichkeit für Top-N Listen für N = 10, 20, 50, 100 für alle Nutzer visuell vergleichen
+```{r}
+list_similarities <- c(10, 20, 50, 100)
+matrix_min_similarities <- analyze_topn_recos(matrix_movies, list_similarities)
+
+# Get the number of rows
+num_rows <- nrow(matrix_min_similarities)
+
+# Plot a histogram for each row
+for(i in 1:num_rows) {
+  hist(matrix_min_similarities[i, ], main = paste("Histogram of min Similarities for N =", list_similarities[i]), xlab = "Minimum Similarity", xlim = c(0, 1))
+}
+```
+
+## 4.5 Top 20 Empfehlungen für Nutzer 5, 25, 50 150 visualisieren
+```{r}
+list_users <- c(5, 25, 50, 150)
+subset_top20List <- top20List[top20List$User %in% list_users, ]
+
+create_cleveland_plot(subset_top20List, matrix_userGenreProfileBinary, matrix_movieGenre, list_users)
+```
+
+## 4.6 Für Nutzer 133, 555 Profil mit Top-N Empfehlungen für N = 20, 30, 40 50 analysieren, visualisieren und diskutieren
+```{r}
+list_N <- c(20, 30, 40, 50)
+list_users <- c(133, 555)
+for(N in list_N) {
+  list_topN <- get_topn_recos(matrix_movies, N)
+  create_cleveland_plot(list_topN, matrix_userGenreProfileBinary, matrix_movieGenre, list_users)
+}
+```
